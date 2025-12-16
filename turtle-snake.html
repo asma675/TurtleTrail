@@ -1,0 +1,526 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Turtle Snake 🐢</title>
+  <style>
+    :root { color-scheme: dark; }
+    body{
+      margin:0;min-height:100vh;display:grid;place-items:center;
+      background:radial-gradient(1200px 800px at 25% 15%, #11302a, #061014 60%, #04070a);
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#eaf7f2;
+    }
+    .wrap{
+      display:grid;gap:14px;grid-template-columns:auto 290px;align-items:start;
+      padding:18px;background:rgba(8,12,14,0.55);
+      border:1px solid rgba(255,255,255,0.10);border-radius:18px;
+      box-shadow:0 12px 40px rgba(0,0,0,0.45);backdrop-filter:blur(6px);
+    }
+    canvas{
+      border-radius:16px;background:linear-gradient(#060b0d,#04080a);
+      border:1px solid rgba(255,255,255,0.12);box-shadow:0 10px 30px rgba(0,0,0,0.55);
+    }
+    .panel{
+      display:grid;gap:10px;padding:12px;border-radius:16px;
+      border:1px solid rgba(255,255,255,0.10);background:rgba(255,255,255,0.04);
+    }
+    .title{display:flex;align-items:center;justify-content:space-between;gap:10px}
+    .title h1{margin:0;font-size:18px;letter-spacing:0.3px}
+    .pill{
+      padding:4px 10px;border-radius:999px;font-size:12px;opacity:0.9;
+      border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.06);
+    }
+    .row{display:flex;justify-content:space-between;gap:10px}
+    .kbd{
+      font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;
+      font-size:12px;padding:2px 6px;border-radius:8px;
+      border:1px solid rgba(255,255,255,0.14);background:rgba(0,0,0,0.35);
+    }
+    button{
+      cursor:pointer;border:1px solid rgba(255,255,255,0.16);
+      background:rgba(255,255,255,0.06);color:inherit;
+      padding:10px 12px;border-radius:12px;font-weight:700;
+    }
+    button:hover{background:rgba(255,255,255,0.10)}
+    .btnrow{display:flex;gap:10px}
+    .btnrow button{flex:1}
+    .small{font-size:12px;opacity:0.82;line-height:1.4}
+    .controls{font-size:13px;line-height:1.55;opacity:0.95}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <canvas id="game" width="600" height="600" aria-label="Turtle Snake canvas"></canvas>
+
+    <div class="panel">
+      <div class="title">
+        <h1>Turtle Snake 🐢</h1>
+        <span class="pill" id="statePill">READY</span>
+      </div>
+
+      <div class="row"><span>Score</span><strong id="score">0</strong></div>
+      <div class="row"><span>Best</span><strong id="best">0</strong></div>
+      <div class="row"><span>Speed</span><strong id="speed">1.0×</strong></div>
+
+      <div class="btnrow">
+        <button id="btnStart">Start</button>
+        <button id="btnSound">Sound: ON</button>
+      </div>
+
+      <div class="controls">
+        <div><span class="kbd">↑</span><span class="kbd">↓</span><span class="kbd">←</span><span class="kbd">→</span> move</div>
+        <div><span class="kbd">Space</span> pause / resume</div>
+        <div><span class="kbd">R</span> restart</div>
+      </div>
+
+      <div class="small">
+        Instead of a snake, you control a line of <b>cute turtles</b>.
+        Eat the yummy leaf to grow. Don’t bonk the wall or your own turtle train.
+      </div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  const c = document.getElementById("game");
+  const g = c.getContext("2d");
+
+  const scoreEl = document.getElementById("score");
+  const bestEl  = document.getElementById("best");
+  const speedEl = document.getElementById("speed");
+  const pill    = document.getElementById("statePill");
+  const btnStart= document.getElementById("btnStart");
+  const btnSound= document.getElementById("btnSound");
+
+  const GRID = 24;                 // 24x24 board
+  const CELL = Math.floor(c.width / GRID);
+  const W = GRID, H = GRID;
+
+  const COLORS = {
+    bg1:"#071014", bg2:"#050b0d",
+    grid:"rgba(255,255,255,0.06)",
+    leaf:"#9CFFB0",
+    leafVein:"rgba(0,0,0,0.18)",
+    text:"#eaf7f2",
+    shadow:"rgba(0,0,0,0.28)",
+    turtle:"#5adf9f",
+    turtleDark:"#27a56e",
+    shell:"#3bb47f",
+    shellDark:"#1f7e57",
+    cheek:"rgba(255,175,200,0.55)",
+    eye:"rgba(20,25,30,0.92)",
+  };
+
+  // --- sound ---
+  let soundOn = true;
+  let audioCtx = null;
+  function ensureAudio(){
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+  }
+  function beep(kind="move"){
+    if (!soundOn) return;
+    ensureAudio();
+    const t0 = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    const map = {
+      move:{f1:650,f2:520,d:0.04,v:0.06},
+      eat:{f1:900,f2:1400,d:0.10,v:0.10},
+      hit:{f1:300,f2:120,d:0.22,v:0.10},
+      start:{f1:600,f2:900,d:0.12,v:0.08},
+      pause:{f1:520,f2:360,d:0.10,v:0.06},
+    }[kind] || {f1:650,f2:520,d:0.04,v:0.06};
+
+    osc.type = "triangle";
+    osc.frequency.setValueAtTime(map.f1, t0);
+    osc.frequency.exponentialRampToValueAtTime(map.f2, t0 + map.d);
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(map.v, t0 + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + map.d);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start(t0);
+    osc.stop(t0 + map.d + 0.02);
+  }
+
+  btnSound.addEventListener("click", () => {
+    soundOn = !soundOn;
+    btnSound.textContent = soundOn ? "Sound: ON" : "Sound: OFF";
+    if (soundOn) beep("move");
+  });
+
+  // --- state ---
+  let best = Number(localStorage.getItem("turtle_snake_best") || 0);
+  bestEl.textContent = String(best);
+
+  let running = false;
+  let paused = false;
+
+  // snake as turtle train
+  let turtles = [];
+  let dir = {x:1,y:0};
+  let nextDir = {x:1,y:0};
+  let leaf = {x:10,y:10};
+  let score = 0;
+
+  // speed scaling
+  function tickMs(){
+    // Faster as you score; but not too crazy.
+    const mult = 1 + Math.floor(score / 6) * 0.10;
+    speedEl.textContent = mult.toFixed(1) + "×";
+    return Math.max(70, 130 / mult);
+  }
+
+  function setPill(t){ pill.textContent = t; }
+
+  function randCell(){
+    return { x: Math.floor(Math.random() * W), y: Math.floor(Math.random() * H) };
+  }
+
+  function placeLeaf(){
+    while (true){
+      const p = randCell();
+      if (!turtles.some(s => s.x === p.x && s.y === p.y)){
+        leaf = p;
+        return;
+      }
+    }
+  }
+
+  function reset(){
+    turtles = [
+      {x: Math.floor(W/2), y: Math.floor(H/2)},
+      {x: Math.floor(W/2)-1, y: Math.floor(H/2)},
+      {x: Math.floor(W/2)-2, y: Math.floor(H/2)},
+    ];
+    dir = {x:1,y:0};
+    nextDir = {x:1,y:0};
+    score = 0;
+    scoreEl.textContent = "0";
+    placeLeaf();
+    paused = false;
+    draw();
+  }
+
+  function start(){
+    reset();
+    running = true;
+    setPill("PLAYING");
+    beep("start");
+    loop();
+  }
+
+  function gameOver(){
+    running = false;
+    paused = false;
+    setPill("GAME OVER");
+    beep("hit");
+    if (score > best){
+      best = score;
+      localStorage.setItem("turtle_snake_best", String(best));
+      bestEl.textContent = String(best);
+    }
+    drawOverlay("Game Over", "Press R to restart");
+  }
+
+  function togglePause(){
+    if (!running) return;
+    paused = !paused;
+    setPill(paused ? "PAUSED" : "PLAYING");
+    beep("pause");
+    if (!paused) loop();
+    else drawOverlay("Paused", "Press Space to resume");
+  }
+
+  btnStart.addEventListener("click", () => {
+    if (!running) start();
+    else togglePause();
+  });
+
+  // --- Drawing ---
+  function drawGrid(){
+    g.save();
+    g.strokeStyle = COLORS.grid;
+    g.lineWidth = 1;
+    for (let x=0;x<=W;x++){
+      g.beginPath();
+      g.moveTo(x*CELL, 0);
+      g.lineTo(x*CELL, H*CELL);
+      g.stroke();
+    }
+    for (let y=0;y<=H;y++){
+      g.beginPath();
+      g.moveTo(0, y*CELL);
+      g.lineTo(W*CELL, y*CELL);
+      g.stroke();
+    }
+    g.restore();
+  }
+
+  function drawLeaf(px, py, s){
+    const cx = px + s/2;
+    const cy = py + s/2;
+    g.save();
+    g.fillStyle = COLORS.leaf;
+    g.beginPath();
+    g.ellipse(cx, cy, s*0.28, s*0.38, Math.PI/6, 0, Math.PI*2);
+    g.fill();
+
+    // vein
+    g.strokeStyle = COLORS.leafVein;
+    g.lineWidth = Math.max(2, s*0.06);
+    g.lineCap = "round";
+    g.beginPath();
+    g.moveTo(cx, cy + s*0.26);
+    g.lineTo(cx, cy - s*0.28);
+    g.stroke();
+
+    // stem
+    g.strokeStyle = "rgba(0,0,0,0.20)";
+    g.lineWidth = Math.max(2, s*0.05);
+    g.beginPath();
+    g.moveTo(cx, cy + s*0.32);
+    g.lineTo(cx + s*0.14, cy + s*0.44);
+    g.stroke();
+
+    g.restore();
+  }
+
+  function drawTurtleSegment(seg, idx){
+    const px = seg.x * CELL;
+    const py = seg.y * CELL;
+    const s = CELL;
+    const cx = px + s/2;
+    const cy = py + s/2;
+
+    const isHead = (idx === 0);
+    const isTail = (idx === turtles.length - 1);
+
+    // direction for head based on current dir
+    const dx = dir.x, dy = dir.y;
+    const angle = Math.atan2(dy, dx);
+
+    // soft shadow
+    g.save();
+    g.fillStyle = COLORS.shadow;
+    g.beginPath();
+    g.ellipse(cx, cy + s*0.22, s*0.32, s*0.18, 0, 0, Math.PI*2);
+    g.fill();
+    g.restore();
+
+    // body base (turtle skin)
+    g.save();
+    g.fillStyle = COLORS.turtle;
+    g.beginPath();
+    g.roundRect(px + s*0.14, py + s*0.18, s*0.72, s*0.64, s*0.22);
+    g.fill();
+
+    // shell
+    g.fillStyle = COLORS.shell;
+    g.beginPath();
+    g.ellipse(cx, cy + s*0.02, s*0.28, s*0.22, 0, 0, Math.PI*2);
+    g.fill();
+
+    // shell pattern
+    g.strokeStyle = COLORS.shellDark;
+    g.lineWidth = Math.max(1, s*0.05);
+    g.globalAlpha = 0.8;
+    g.beginPath();
+    g.moveTo(cx - s*0.20, cy + s*0.02); g.lineTo(cx + s*0.20, cy + s*0.02);
+    g.moveTo(cx, cy - s*0.14); g.lineTo(cx, cy + s*0.18);
+    g.stroke();
+    g.globalAlpha = 1;
+
+    // little legs
+    g.fillStyle = COLORS.turtleDark;
+    const legR = s*0.08;
+    g.beginPath();
+    g.ellipse(px + s*0.22, py + s*0.72, legR*1.1, legR, 0, 0, Math.PI*2);
+    g.ellipse(px + s*0.78, py + s*0.72, legR*1.1, legR, 0, 0, Math.PI*2);
+    g.fill();
+
+    // Head & face
+    if (isHead){
+      g.translate(cx, cy);
+      g.rotate(angle);
+
+      // head bubble in front
+      g.fillStyle = COLORS.turtle;
+      g.beginPath();
+      g.ellipse(s*0.34, 0, s*0.18, s*0.16, 0, 0, Math.PI*2);
+      g.fill();
+
+      // cheeks
+      g.fillStyle = COLORS.cheek;
+      g.beginPath();
+      g.ellipse(s*0.28, s*0.07, s*0.06, s*0.05, 0, 0, Math.PI*2);
+      g.ellipse(s*0.28, -s*0.07, s*0.06, s*0.05, 0, 0, Math.PI*2);
+      g.fill();
+
+      // eyes
+      g.fillStyle = COLORS.eye;
+      g.beginPath();
+      g.arc(s*0.38, -s*0.06, s*0.05, 0, Math.PI*2);
+      g.arc(s*0.38,  s*0.06, s*0.05, 0, Math.PI*2);
+      g.fill();
+
+      // tiny mouth
+      g.strokeStyle = "rgba(0,0,0,0.28)";
+      g.lineWidth = Math.max(1, s*0.04);
+      g.lineCap = "round";
+      g.beginPath();
+      g.arc(s*0.30, 0, s*0.06, Math.PI*0.15, Math.PI*0.85);
+      g.stroke();
+    }
+
+    // Tail (tiny nub) on last segment
+    if (isTail && turtles.length > 1){
+      // aim tail opposite of previous segment
+      const prev = turtles[idx-1];
+      const tx = seg.x - prev.x;
+      const ty = seg.y - prev.y;
+      const ta = Math.atan2(ty, tx);
+
+      g.save();
+      g.translate(cx, cy);
+      g.rotate(ta);
+      g.fillStyle = COLORS.turtleDark;
+      g.beginPath();
+      g.ellipse(-s*0.34, 0, s*0.08, s*0.06, 0, 0, Math.PI*2);
+      g.fill();
+      g.restore();
+    }
+
+    // outline (subtle)
+    g.strokeStyle = "rgba(255,255,255,0.12)";
+    g.lineWidth = 1;
+    g.beginPath();
+    g.roundRect(px + s*0.14, py + s*0.18, s*0.72, s*0.64, s*0.22);
+    g.stroke();
+
+    g.restore();
+  }
+
+  function drawBackground(){
+    // subtle gradient bg
+    const grd = g.createLinearGradient(0,0,c.width,c.height);
+    grd.addColorStop(0, COLORS.bg1);
+    grd.addColorStop(1, COLORS.bg2);
+    g.fillStyle = grd;
+    g.fillRect(0,0,c.width,c.height);
+  }
+
+  function draw(){
+    drawBackground();
+    drawGrid();
+
+    // leaf
+    drawLeaf(leaf.x*CELL, leaf.y*CELL, CELL);
+
+    // turtles
+    for (let i=0;i<turtles.length;i++){
+      drawTurtleSegment(turtles[i], i);
+    }
+
+    // frame
+    g.save();
+    g.strokeStyle = "rgba(255,255,255,0.10)";
+    g.lineWidth = 2;
+    g.strokeRect(1,1,c.width-2,c.height-2);
+    g.restore();
+  }
+
+  function drawOverlay(title, subtitle){
+    draw();
+    g.save();
+    g.fillStyle = "rgba(0,0,0,0.55)";
+    g.fillRect(0,0,c.width,c.height);
+    g.fillStyle = COLORS.text;
+    g.textAlign = "center";
+    g.font = "800 34px system-ui,-apple-system,Segoe UI,Roboto,Arial";
+    g.fillText(title, c.width/2, c.height/2 - 12);
+    g.globalAlpha = 0.9;
+    g.font = "16px system-ui,-apple-system,Segoe UI,Roboto,Arial";
+    g.fillText(subtitle, c.width/2, c.height/2 + 22);
+    g.restore();
+  }
+
+  // --- game logic ---
+  function step(){
+    // apply buffered direction (prevents reverse in same tick)
+    dir = nextDir;
+
+    const head = turtles[0];
+    const nh = { x: head.x + dir.x, y: head.y + dir.y };
+
+    // wall hit
+    if (nh.x < 0 || nh.x >= W || nh.y < 0 || nh.y >= H) return false;
+
+    // self hit
+    if (turtles.some((s) => s.x === nh.x && s.y === nh.y)) return false;
+
+    turtles.unshift(nh);
+
+    // eat leaf?
+    if (nh.x === leaf.x && nh.y === leaf.y){
+      score += 1;
+      scoreEl.textContent = String(score);
+      beep("eat");
+      placeLeaf();
+    } else {
+      turtles.pop();
+    }
+
+    return true;
+  }
+
+  let lastTick = 0;
+  function loop(t=0){
+    if (!running || paused) return;
+
+    const ms = tickMs();
+    if (t - lastTick >= ms){
+      lastTick = t;
+      const ok = step();
+      draw();
+      if (!ok) return gameOver();
+    }
+    requestAnimationFrame(loop);
+  }
+
+  // --- input ---
+  function setDir(nx, ny){
+    // prevent direct reverse
+    if (dir.x === -nx && dir.y === -ny) return;
+    nextDir = {x:nx,y:ny};
+    beep("move");
+  }
+
+  window.addEventListener("keydown", (e) => {
+    if (e.code === "Space"){
+      e.preventDefault();
+      if (!running) return start();
+      return togglePause();
+    }
+    const k = e.key;
+    if (k === "r" || k === "R"){
+      start();
+      return;
+    }
+    if (!running || paused) return;
+
+    if (k === "ArrowUp") setDir(0,-1);
+    else if (k === "ArrowDown") setDir(0,1);
+    else if (k === "ArrowLeft") setDir(-1,0);
+    else if (k === "ArrowRight") setDir(1,0);
+  });
+
+  // init
+  setPill("READY");
+  drawOverlay("Turtle Snake 🐢", "Press Start or Space");
+})();
+</script>
+</body>
+</html>
